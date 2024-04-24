@@ -2373,7 +2373,63 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
 
+
+
+  [[maybe_unused]] int prev_level = 0;
+  Clue_Entry_Set *ce_set_ptr = read_options.ce_set_ptr;
+
+  std::string value_str;
+  
+  
+  if(f == nullptr && !read_options.rollback_read){
+    //printf("[DEBUG] f is nullptr in version::Get\n");
+      if(ce_set_ptr->contains(user_key.ToString())){
+        value_str = ce_set_ptr->get(user_key.ToString());
+        //printf("[DEBUG] found in ce set |%s|\n", value_str.c_str());
+        Slice tmp_val_slice(value_str);
+        value->PinSelf(tmp_val_slice);
+        return;
+      }
+  }
+  
+
   while (f != nullptr) {
+
+    //if(fp.GetHitFileLevel() > 0 && read_options.rollback_read){
+      /*
+    if(fp.GetCurrentLevel() > 0 && read_options.rollback_read){
+      break;
+    }
+    
+    if(prev_level == 0 && fp.GetCurrentLevel() > 0 && !read_options.rollback_read){
+      //read ce set
+      //printf("[DEBUG] read ce set impl/version_set.cc\n");
+      if(ce_set_ptr->contains(user_key.ToString())){
+        value_str = ce_set_ptr->get(user_key.ToString());
+        //printf("[DEBUG] found in ce set2 |%s|\n", value_str.c_str());
+        Slice tmp_val_slice(value_str);
+        value->PinSelf(tmp_val_slice);
+        return;
+      }
+    }
+
+    prev_level = fp.GetCurrentLevel();
+    */
+
+
+   /*
+   if(read_options.rollback_read == false){
+    if(ce_set_ptr->contains(user_key.ToString())){
+      value_str = ce_set_ptr->get(user_key.ToString());
+      //printf("[DEBUG] found in ce set2 |%s|\n", value_str.c_str());
+      Slice tmp_val_slice(value_str);
+      value->PinSelf(tmp_val_slice);
+      return;
+    }
+   }
+     */
+
+
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
       // stop here.
@@ -2486,6 +2542,11 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     }
     f = fp.GetNextFile();
   }
+
+
+
+
+
   if (db_statistics_ != nullptr) {
     get_context.ReportCounters();
   }

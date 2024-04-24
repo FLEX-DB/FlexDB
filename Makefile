@@ -1217,7 +1217,7 @@ unity_test: $(OBJ_DIR)/db/db_basic_test.o $(OBJ_DIR)/db/db_test_util.o $(TEST_OB
 rocksdb.h rocksdb.cc: build_tools/amalgamate.py Makefile $(LIB_SOURCES) unity.cc
 	build_tools/amalgamate.py -I. -i./include unity.cc -x include/rocksdb/c.h -H rocksdb.h -o rocksdb.cc
 
-clean: clean-ext-libraries-all clean-rocks clean-rocksjava
+clean: clean-ext-libraries-all clean-rocks clean-rocksjava clean-ceset
 
 clean-not-downloaded: clean-ext-libraries-bin clean-rocks clean-not-downloaded-rocksjava
 
@@ -1241,6 +1241,9 @@ clean-ext-libraries-all:
 
 clean-ext-libraries-bin:
 	find . -maxdepth 1 -type d \( -name bzip2\* -or -name snappy\* -or -name zlib\* -or -name lz4\* -or -name zstd\* \) -prune -exec rm -rf {} \;
+
+clean-ceset:
+	rm -rf *.ckp
 
 tags:
 	ctags -R .

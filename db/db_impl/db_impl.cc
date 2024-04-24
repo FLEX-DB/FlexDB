@@ -108,6 +108,16 @@
 #include "util/string_util.h"
 #include "utilities/trace/replayer_impl.h"
 
+#include <chrono>
+std::chrono::system_clock::time_point CSD_start;
+std::chrono::system_clock::time_point CSD_end;
+std::chrono::system_clock::time_point Compaction_trigged;
+std::chrono::system_clock::time_point L0_stall;
+std::chrono::system_clock::time_point flush_trigged;
+std::chrono::system_clock::time_point flush_trigged_old;
+
+bool time_first = true;
+
 namespace ROCKSDB_NAMESPACE {
 
 const std::string kDefaultColumnFamilyName("default");
@@ -2188,8 +2198,21 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   PinnedIteratorsManager pinned_iters_mgr;
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
+    ReadOptions tmp_read_options(read_options);
+    tmp_read_options.ce_set_ptr = this->GetDBOptions().ce_set;
+    tmp_read_options.ce_set_ptr = this->immutable_db_options_.ce_set;
+    if(this->GetDBOptions().ce_set == nullptr){
+      //printf("[DEBUG] ceset null \n");
+    }
+    if(this->GetOptions().ce_set == nullptr){
+      //printf("[DEBUG] ceset null 2\n");
+    }
+    if(tmp_read_options.ce_set_ptr == nullptr){
+      //printf("[DEBUG] ceset null 3\n");
+    }
+    //printf("[DEBUG] ceset size in db_impl.cc %d\n", tmp_read_options.ce_set_ptr->size());
     sv->current->Get(
-        read_options, lkey, get_impl_options.value, get_impl_options.columns,
+        tmp_read_options, lkey, get_impl_options.value, get_impl_options.columns,
         timestamp, &s, &merge_context, &max_covering_tombstone_seq,
         &pinned_iters_mgr,
         get_impl_options.get_value ? get_impl_options.value_found : nullptr,

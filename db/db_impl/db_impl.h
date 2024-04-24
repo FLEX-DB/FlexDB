@@ -66,6 +66,16 @@
 #include "util/stop_watch.h"
 #include "util/thread_local.h"
 
+#include <chrono>
+extern std::chrono::system_clock::time_point CSD_start;
+extern std::chrono::system_clock::time_point CSD_end;
+extern std::chrono::system_clock::time_point Compaction_trigged;
+extern std::chrono::system_clock::time_point L0_stall;
+extern std::chrono::system_clock::time_point flush_trigged;
+extern std::chrono::system_clock::time_point flush_trigged_old;
+
+extern bool time_first;
+
 namespace ROCKSDB_NAMESPACE {
 
 class Arena;

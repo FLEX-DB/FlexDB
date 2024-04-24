@@ -91,6 +91,9 @@
 #include "utilities/merge_operators/sortlist.h"
 #include "utilities/persistent_cache/block_cache_tier.h"
 
+#include "rocksdb/db_master.h"
+bool init=false;
+
 #ifdef MEMKIND
 #include "memory/memkind_kmem_allocator.h"
 #endif
@@ -247,6 +250,10 @@ DEFINE_string(
     "\trestore -- Restore the DB from the latest backup available, rate limit can be specified through --restore_rate_limit\n");
 
 DEFINE_int64(num, 1000000, "Number of key/values to place in database");
+
+DEFINE_int64(mix_min_value_size, 10, "mix_min_value_size");
+
+DEFINE_bool(mix_only_put, false, "mixgraph only write");
 
 DEFINE_int64(numdistinct, 1000,
              "Number of distinct keys to use. Used in RandomWithVerify to "
@@ -1736,6 +1743,11 @@ DEFINE_bool(build_info, false,
 DEFINE_bool(track_and_verify_wals_in_manifest, false,
             "If true, enable WAL tracking in the MANIFEST");
 
+DEFINE_int32(num_vlsm, 2, "The number of V-LSM-tree");
+
+//DEFINE_bool(use_ce_rollback, false,
+//            "If true, enable CE rollback in FlexDB.");
+
 namespace ROCKSDB_NAMESPACE {
 namespace {
 static Status CreateMemTableRepFactory(
@@ -1763,6 +1775,9 @@ static Status CreateMemTableRepFactory(
 }
 
 }  // namespace
+
+int totalvlsmL0 = 0;
+unsigned int totalCE = 0;
 
 enum DistributionType : unsigned char { kFixed = 0, kUniform, kNormal };
 
@@ -1893,6 +1908,7 @@ class RandomGenerator {
       pos_ = 0;
     }
     pos_ += len;
+    //printf("[DEBUG] %u\n", len);
     return Slice(data_.data() + pos_ - len, len);
   }
 
@@ -2283,15 +2299,15 @@ class Stats {
 
         } else {
           fprintf(stderr,
-                  "%s ... thread %d: (%" PRIu64 ",%" PRIu64
-                  ") ops and "
-                  "(%.1f,%.1f) ops/second in (%.6f,%.6f) seconds\n",
+                  "%s ... thread %d: %" PRIu64 " %" PRIu64
+                  " ops and "
+                  "%.1f %.1f ops/second in %.6f %.6f seconds totalL0 %d totalCE %u\n",
                   clock_->TimeToString(now / 1000000).c_str(), id_,
                   done_ - last_report_done_, done_,
                   (done_ - last_report_done_) / (usecs_since_last / 1000000.0),
                   done_ / ((now - start_) / 1000000.0),
                   (now - last_report_finish_) / 1000000.0,
-                  (now - start_) / 1000000.0);
+                  (now - start_) / 1000000.0, totalvlsmL0, totalCE);
 
           if (id_ == 0 && FLAGS_stats_per_interval) {
             std::string stats;
@@ -2627,7 +2643,7 @@ class Duration {
     ops_ += increment;
 
     if (max_seconds_) {
-      // Recheck every appx 1000 ops (exact iff increment is factor of 1000)
+    // Recheck every appx 1000 ops (exact iff increment is factor of 1000)
       auto granularity = FLAGS_ops_between_duration_checks;
       if ((ops_ / granularity) != ((ops_ - increment) / granularity)) {
         uint64_t now = FLAGS_env->NowMicros();
@@ -2654,6 +2670,7 @@ class Benchmark {
   std::shared_ptr<Cache> compressed_cache_;
   std::shared_ptr<const SliceTransform> prefix_extractor_;
   DBWithColumnFamilies db_;
+  std::vector<DBWithColumnFamilies> dbs_;
   std::vector<DBWithColumnFamilies> multi_dbs_;
   int64_t num_;
   int key_size_;
@@ -2681,6 +2698,10 @@ class Benchmark {
   bool use_blob_db_;    // Stacked BlobDB
   bool read_operands_;  // read via GetMergeOperands()
   std::vector<std::string> keys_;
+
+  DB_MASTER db_master = DB_MASTER();
+
+
 
   class ErrorHandlerListener : public EventListener {
    public:
@@ -3297,6 +3318,7 @@ class Benchmark {
       ErrorExit();
     }
     Open(&open_options_);
+    init=true;
     PrintHeader(open_options_);
     std::stringstream benchmark_stream(FLAGS_benchmarks);
     std::string name;
@@ -3567,6 +3589,7 @@ class Benchmark {
         PrintStats("rocksdb.block-cache-entry-stats");
       } else if (name == "stats") {
         PrintStats("rocksdb.stats");
+        db_master.printstat();
       } else if (name == "resetstats") {
         ResetStats();
       } else if (name == "verify") {
@@ -3622,6 +3645,7 @@ class Benchmark {
           if (db_.db != nullptr) {
             db_.DeleteDBs();
             DestroyDB(FLAGS_db, open_options_);
+            db_master.DestroyDB_Master(open_options_);
           }
           Options options = open_options_;
           for (size_t i = 0; i < multi_dbs_.size(); i++) {
@@ -4852,7 +4876,20 @@ class Benchmark {
             FLAGS_secondary_update_interval, db));
       }
     } else {
-      s = DB::Open(options, db_name, &db->db);
+        Options options_for_bg(options);
+        options_for_bg.max_background_flushes = FLAGS_max_background_flushes * FLAGS_num_vlsm;
+        options_for_bg.max_background_compactions = FLAGS_max_background_compactions * FLAGS_num_vlsm;
+        //options_for_bg.write_buffer_size = 536870912;
+
+        s = DB::Open(options_for_bg, db_name, &db->db);
+	      Options options_for_vlsm(options);
+	      options_for_vlsm.max_bytes_for_level_base = options.max_bytes_for_level_base / FLAGS_num_vlsm;
+        options_for_vlsm.level0_slowdown_writes_trigger = (options.level0_slowdown_writes_trigger / FLAGS_num_vlsm) + 1;
+        options_for_vlsm.level0_stop_writes_trigger = (options.level0_stop_writes_trigger / FLAGS_num_vlsm) + 1;
+        
+        //options_for_vlsm.max_background_jobs = (FLAGS_max_background_jobs / FLAGS_num_vlsm) + 1 ;
+        s = db_master.DB_MASTER::Open(options_for_vlsm, db_name + "/vlsm", FLAGS_num_vlsm);
+        //s = db_master.DB_MASTER::Open(options, db_name + "/vlsm", FLAGS_num_vlsm);
     }
     if (FLAGS_report_open_timing) {
       std::cout << "OpenDb:     "
@@ -5121,6 +5158,8 @@ class Benchmark {
       int64_t batch_bytes = 0;
 
       for (int64_t j = 0; j < entries_per_batch_; j++) {
+        totalvlsmL0 = db_master.totalL0Num;
+        totalCE = db_master.totalCENum;
         int64_t rand_num = 0;
         if ((write_mode == UNIQUE_RANDOM) && (p > 0.0)) {
           if ((inserted_key_window.size() > 0) &&
@@ -5244,7 +5283,7 @@ class Benchmark {
             s = blobdb->Put(write_options_, key, val);
           }
         } else if (FLAGS_num_column_families <= 1) {
-          batch.Put(key, val);
+          db_master.Put(write_options_, key, val);
         } else {
           // We use same rand_num as seed for key and column family so that we
           // can deterministically find the cfh corresponding to a particular
@@ -5336,7 +5375,7 @@ class Benchmark {
       }
       if (!use_blob_db_) {
         // Not stacked BlobDB
-        s = db_with_cfh->db->Write(write_options_, &batch);
+        //s = db_with_cfh->db->Write(write_options_, &batch);
       }
       thread->stats.FinishedOps(db_with_cfh, db_with_cfh->db,
                                 entries_per_batch_, kWrite);
@@ -5695,7 +5734,11 @@ class Benchmark {
 
   void ReadSequential(ThreadState* thread) {
     if (db_.db != nullptr) {
-      ReadSequential(thread, db_.db);
+      int num_db = db_master.GetNumDB();
+      for(int i = 0; i < num_db; i++){
+        ReadSequential(thread, db_master.GetNthDB(i));
+      }
+      //ReadSequential(thread, db_.db);
     } else {
       for (const auto& db_with_cfh : multi_dbs_) {
         ReadSequential(thread, db_with_cfh.db);
@@ -5948,11 +5991,11 @@ class Benchmark {
       GenerateKeyFromInt(key_rand, FLAGS_num, &key);
       read++;
       std::string ts_ret;
-      std::string* ts_ptr = nullptr;
+      //std::string* ts_ptr = nullptr;
       if (user_timestamp_size_ > 0) {
         ts = mock_app_clock_->GetTimestampForRead(thread->rand, ts_guard.get());
         options.timestamp = &ts;
-        ts_ptr = &ts_ret;
+        //ts_ptr = &ts_ret;
       }
       Status s;
       pinnable_val.Reset();
@@ -5986,7 +6029,14 @@ class Benchmark {
               &get_merge_operands_options, &number_of_operands);
         }
       } else {
-        s = db_with_cfh->db->Get(options, cfh, key, &pinnable_val, ts_ptr);
+        //s = db_with_cfh->db->Get(options, cfh, key, &pinnable_val, ts_ptr);
+        std::string val_str;
+        totalvlsmL0 = db_master.totalL0Num;
+        totalCE = db_master.totalCENum;
+        s = db_master.Get(options, key, &val_str);
+        //couldn't find a function in class Slice & PinnableSlice, and data_ is public
+        pinnable_val.data_ = val_str.c_str();
+        pinnable_val.size_ = val_str.length();
       }
 
       if (s.ok()) {
@@ -6411,6 +6461,8 @@ class Benchmark {
     std::unique_ptr<const char[]> key_guard;
     Slice key = AllocateKey(&key_guard);
     PinnableSlice pinnable_val;
+
+    [[maybe_unused]]std::string val_str;
     query.Initiate(ratio);
 
     // the limit of qps initiation
@@ -6455,6 +6507,11 @@ class Benchmark {
       GenerateKeyFromInt(key_rand, FLAGS_num, &key);
       int query_type = query.GetType(rand_v);
 
+      if(FLAGS_mix_only_put == true){
+        query_type = 1;
+      }
+    
+
       // change the qps
       uint64_t now = FLAGS_env->NowMicros();
       uint64_t usecs_since_last;
@@ -6489,13 +6546,12 @@ class Benchmark {
         // the Get query
         gets++;
         if (FLAGS_num_column_families > 1) {
-          s = db_with_cfh->db->Get(read_options_, db_with_cfh->GetCfh(key_rand),
-                                   key, &pinnable_val);
+          s = db_with_cfh->db->Get(read_options_, db_with_cfh->GetCfh(key_rand), key, &pinnable_val);
+         
+          
         } else {
-          pinnable_val.Reset();
-          s = db_with_cfh->db->Get(read_options_,
-                                   db_with_cfh->db->DefaultColumnFamily(), key,
-                                   &pinnable_val);
+          s = db_master.GetPin(read_options_, key, &pinnable_val);
+          //s = db_master.Get(read_options_, key, &val_str);
         }
 
         if (s.ok()) {
@@ -6516,16 +6572,16 @@ class Benchmark {
         puts++;
         int64_t val_size = ParetoCdfInversion(u, FLAGS_value_theta,
                                               FLAGS_value_k, FLAGS_value_sigma);
-        if (val_size < 10) {
-          val_size = 10;
+        //if (val_size < 10) {
+        //  val_size = 10;
+        if (val_size < FLAGS_mix_min_value_size) {
+          val_size = FLAGS_mix_min_value_size;
         } else if (val_size > value_max) {
           val_size = val_size % value_max;
         }
         total_val_size += val_size;
 
-        s = db_with_cfh->db->Put(
-            write_options_, key,
-            gen.Generate(static_cast<unsigned int>(val_size)));
+        s = db_master.Put(write_options_, key, gen.Generate(static_cast<unsigned int>(val_size)));
         if (!s.ok()) {
           fprintf(stderr, "put error: %s\n", s.ToString().c_str());
           ErrorExit();
@@ -6641,7 +6697,7 @@ class Benchmark {
     Slice lower_bound = AllocateKey(&lower_bound_key_guard);
 
     Duration duration(FLAGS_duration, reads_);
-    char value_buffer[256];
+    [[maybe_unused]]char value_buffer[256];
     while (!duration.Done(1)) {
       int64_t seek_pos = thread->rand.Next() % FLAGS_num;
       GenerateKeyFromIntForSeek(static_cast<uint64_t>(seek_pos), FLAGS_num,
@@ -6676,37 +6732,61 @@ class Benchmark {
               ? (uint64_t{thread->rand.Next()} % multi_dbs_.size())
               : 0;
       std::unique_ptr<Iterator> single_iter;
-      Iterator* iter_to_use;
+      std::unique_ptr<Iterator> single_iter_master[db_master.GetNumDB()];
+      [[maybe_unused]] Iterator* iter_to_use;
+      int dbptr_idx = -1;
+      Iterator* iter_to_use_master[db_master.GetNumDB()];
       if (FLAGS_use_tailing_iterator) {
         iter_to_use = tailing_iters[db_idx_to_use];
+        //iter_to_use = single_iter.get();
+        db_master.IteratorGet(iter_to_use_master, single_iter_master);
       } else {
         if (db_.db != nullptr) {
-          single_iter.reset(db_.db->NewIterator(options));
+          db_master.IteratorReset(single_iter_master, options);
         } else {
           single_iter.reset(multi_dbs_[db_idx_to_use].db->NewIterator(options));
         }
-        iter_to_use = single_iter.get();
+        db_master.IteratorGet(iter_to_use_master, single_iter_master);
       }
 
-      iter_to_use->Seek(key);
+      db_master.IteratorSeek(iter_to_use_master, key);
       read++;
-      if (iter_to_use->Valid() && iter_to_use->key().compare(key) == 0) {
+      //if (iter_to_use->Valid() && iter_to_use->key().compare(key) == 0) {
+      //  found++;
+      //}
+      //db_master.IteratorValid(iter_to_use_master) && 
+      if (db_master.IteratorCompare(iter_to_use_master, key, &dbptr_idx) == true){
         found++;
       }
 
-      for (int j = 0; j < FLAGS_seek_nexts && iter_to_use->Valid(); ++j) {
+      for (int j = 0; j < FLAGS_seek_nexts ; ++j) { //&& db_master.IteratorValid(iter_to_use_master)
         // Copy out iterator's value to make sure we read them.
+        /*
         Slice value = iter_to_use->value();
         memcpy(value_buffer, value.data(),
                std::min(value.size(), sizeof(value_buffer)));
         bytes += iter_to_use->key().size() + iter_to_use->value().size();
-
-        if (!FLAGS_reverse_iterator) {
-          iter_to_use->Next();
-        } else {
-          iter_to_use->Prev();
+        */
+       //printf("seek next\n");
+       
+        if(dbptr_idx != -1){
+          //Slice value = iter_to_use->value();
+          Slice value = db_master.IteratorValue(iter_to_use_master, dbptr_idx);
+          memcpy(value_buffer, value.data(),
+          std::min(value.size(), sizeof(value_buffer)));
+          //bytes += iter_to_use->key().size() + iter_to_use->value().size();
+          bytes += db_master.IteratorKey(iter_to_use_master, dbptr_idx).size() + value.size();
         }
-        assert(iter_to_use->status().ok());
+        
+        if (!FLAGS_reverse_iterator) {
+          //iter_to_use_0->Next();
+          db_master.IteratorNext(iter_to_use_master);
+        } else {
+          //iter_to_use_0->Prev();
+          db_master.IteratorPrev(iter_to_use_master);
+        }
+        //assert(iter_to_use_0->status().ok());
+        //assert(db_master.IteratorStatusOk(iter_to_use_master))
       }
 
       if (thread->shared->read_rate_limiter.get() != nullptr &&
@@ -6795,6 +6875,7 @@ class Benchmark {
       ReadRandom(thread);
     } else {
       BGWriter(thread, kWrite);
+      //WriteRandom(thread);
     }
   }
 
@@ -6883,10 +6964,14 @@ class Benchmark {
         ts = mock_app_clock_->Allocate(ts_guard.get());
       }
       if (write_merge == kWrite) {
+        totalvlsmL0 = db_master.totalL0Num;
+        totalCE = db_master.totalCENum;
         if (user_timestamp_size_ == 0) {
-          s = db->Put(write_options_, key, val);
+          s = db_master.Put(write_options_, key, val);
+          //s = db->Put(write_options_, key, val);
         } else {
-          s = db->Put(write_options_, key, ts, val);
+          s = db_master.Put(write_options_, key, val);
+          //s = db->Put(write_options_, key, ts, val);
         }
       } else {
         s = db->Merge(write_options_, key, val);
@@ -6989,7 +7074,7 @@ class Benchmark {
         iter->Next();
         num_next++;
       }
-
+ 
       thread->stats.FinishedOps(&db_, db_.db, 1, kSeek);
     }
     (void)num_seek_to_first;
@@ -7223,7 +7308,9 @@ class Benchmark {
                                                     ts_guard.get());
           options.timestamp = &ts;
         }
-        Status s = db->Get(options, key, &value);
+        //printf("[DEBUG] ReadRandomWriteRandom_Get1\n");
+        //Status s = db->Get(options, key, &value);
+        Status s = db_master.Get(options, key, &value);
         if (!s.ok() && !s.IsNotFound()) {
           fprintf(stderr, "get error: %s\n", s.ToString().c_str());
           // we continue after error rather than exiting so that we can
@@ -7240,9 +7327,12 @@ class Benchmark {
         Status s;
         if (user_timestamp_size_ > 0) {
           Slice ts = mock_app_clock_->Allocate(ts_guard.get());
+          //printf("[DEBUG] ReadRandomWriteRandom_Put1\n");
           s = db->Put(write_options_, key, ts, gen.Generate());
         } else {
-          s = db->Put(write_options_, key, gen.Generate());
+          //printf("[DEBUG] ReadRandomWriteRandom_Put2\n");
+          //s = db->Put(write_options_, key, gen.Generate());
+          s = db_master.Put(write_options_, key, gen.Generate());
         }
         if (!s.ok()) {
           fprintf(stderr, "put error: %s\n", s.ToString().c_str());

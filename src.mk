@@ -42,8 +42,10 @@ LIB_SOURCES =                                                   \
   db/compaction/compaction_outputs.cc                           \
   db/compaction/sst_partitioner.cc                              \
   db/compaction/subcompaction_state.cc                          \
+  db/compaction/clue_entry_set.cc                               \
   db/convenience.cc                                             \
   db/db_filesnapshot.cc                                         \
+  db/db_impl/db_impl_master.cc                                  \
   db/db_impl/compacted_db_impl.cc                               \
   db/db_impl/db_impl.cc                                         \
   db/db_impl/db_impl_compaction_flush.cc                        \

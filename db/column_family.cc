@@ -41,6 +41,8 @@
 #include "util/cast_util.h"
 #include "util/compression.h"
 
+#include <iostream>
+
 namespace ROCKSDB_NAMESPACE {
 
 ColumnFamilyHandleImpl::ColumnFamilyHandleImpl(
@@ -875,10 +877,29 @@ ColumnFamilyData::GetWriteStallConditionAndCause(
     uint64_t num_compaction_needed_bytes,
     const MutableCFOptions& mutable_cf_options,
     const ImmutableCFOptions& immutable_cf_options) {
+
+  if(time_first){
+      time_first = false;
+      flush_trigged_old = CSD_start;
+      flush_trigged = std::chrono::system_clock::now();
+  } 
+  else{
+      flush_trigged = std::chrono::system_clock::now();
+  }
+
+  std::chrono::milliseconds flush_trigged_time;
+  flush_trigged_time = std::chrono::duration_cast<std::chrono::milliseconds>(flush_trigged - flush_trigged_old);
+  flush_trigged_old = flush_trigged;
+  std::chrono::duration<double> flush_tmp = flush_trigged - CSD_start;
+  
   if (num_unflushed_memtables >= mutable_cf_options.max_write_buffer_number) {
     return {WriteStallCondition::kStopped, WriteStallCause::kMemtableLimit};
   } else if (!mutable_cf_options.disable_auto_compactions &&
              num_l0_files >= mutable_cf_options.level0_stop_writes_trigger) {
+           
+    for (const auto& dbPath : immutable_cf_options.cf_paths) {
+      std::cout << "Path: " << dbPath.path  << std::endl;
+    }
     return {WriteStallCondition::kStopped, WriteStallCause::kL0FileCountLimit};
   } else if (!mutable_cf_options.disable_auto_compactions &&
              mutable_cf_options.hard_pending_compaction_bytes_limit > 0 &&
@@ -890,7 +911,7 @@ ColumnFamilyData::GetWriteStallConditionAndCause(
              num_unflushed_memtables >=
                  mutable_cf_options.max_write_buffer_number - 1 &&
              num_unflushed_memtables - 1 >=
-                 immutable_cf_options.min_write_buffer_number_to_merge) {
+                 immutable_cf_options.min_write_buffer_number_to_merge) {    
     return {WriteStallCondition::kDelayed, WriteStallCause::kMemtableLimit};
   } else if (!mutable_cf_options.disable_auto_compactions &&
              mutable_cf_options.level0_slowdown_writes_trigger >= 0 &&
@@ -949,7 +970,7 @@ WriteStallCondition ColumnFamilyData::RecalculateWriteStallConditions(
                      "[%s] Stopping writes because we have %d level-0 files",
                      name_.c_str(), vstorage->l0_delay_trigger_count());
     } else if (write_stall_condition == WriteStallCondition::kStopped &&
-               write_stall_cause == WriteStallCause::kPendingCompactionBytes) {
+               write_stall_cause == WriteStallCause::kPendingCompactionBytes) {        
       write_controller_token_ = write_controller->GetStopToken();
       internal_stats_->AddCFStats(
           InternalStats::PENDING_COMPACTION_BYTES_LIMIT_STOPS, 1);
@@ -1033,7 +1054,7 @@ WriteStallCondition ColumnFamilyData::RecalculateWriteStallConditions(
             "files ",
             name_.c_str(), vstorage->l0_delay_trigger_count());
       } else if (vstorage->estimated_compaction_needed_bytes() >=
-                 mutable_cf_options.soft_pending_compaction_bytes_limit / 4) {
+                 mutable_cf_options.soft_pending_compaction_bytes_limit / 4) {    
         // Increase compaction threads if bytes needed for compaction exceeds
         // 1/4 of threshold for slowing down.
         // If soft pending compaction byte limit is not set, always speed up
@@ -1054,7 +1075,7 @@ WriteStallCondition ColumnFamilyData::RecalculateWriteStallConditions(
       // If the DB recovers from delay conditions, we reward with reducing
       // double the slowdown ratio. This is to balance the long term slowdown
       // increase signal.
-      if (needed_delay) {
+      if (needed_delay) {    
         uint64_t write_rate = write_controller->delayed_write_rate();
         write_controller->set_delayed_write_rate(static_cast<uint64_t>(
             static_cast<double>(write_rate) * kDelayRecoverSlowdownRatio));

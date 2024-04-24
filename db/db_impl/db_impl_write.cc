@@ -17,6 +17,9 @@
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 
+#include <chrono>
+#include <iostream>
+
 namespace ROCKSDB_NAMESPACE {
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, ColumnFamilyHandle* column_family,
@@ -2045,6 +2048,28 @@ Status DBImpl::ScheduleFlushes(WriteContext* context) {
       break;
     }
   }
+
+/*
+if(time_first){
+        time_first = false;
+        flush_trigged_old = CSD_start;
+        flush_trigged = std::chrono::system_clock::now();
+}
+else{
+        flush_trigged = std::chrono::system_clock::now();
+}
+
+std::chrono::milliseconds flush_trigged_time;
+flush_trigged_time = std::chrono::duration_cast<std::chrono::milliseconds>(flush_trigged - flush_trigged_old);
+        flush_trigged_old = flush_trigged;
+        std::chrono::duration<double> flush_tmp = flush_trigged - CSD_start;
+        auto* vstorage = cfds[0]->current()->storage_info();
+        printf("[DEBUG] flush %lf L0_num %d bg_comp_scahed %d num_run_comp %d ", flush_tmp.count(), vstorage->NumLevelFiles(0), bg_compaction_scheduled_, num_running_compactions_);
+  
+	for (const auto& dbPath : cfds[0]->GetLatestCFOptions().cf_paths) {
+   	 std::cout << "Path: " << dbPath.path  << std::endl;
+	  }
+*/
 
   if (two_write_queues_) {
     nonmem_write_thread_.ExitUnbatched(&nonmem_w);

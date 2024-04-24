@@ -9,6 +9,8 @@
 #include <vector>
 
 #include "rocksdb/options.h"
+#include "rocksdb/clue_entry_set.h"
+#include "rocksdb/db_master.h"
 
 namespace ROCKSDB_NAMESPACE {
 class SystemClock;
@@ -19,6 +21,10 @@ struct ImmutableDBOptions {
   explicit ImmutableDBOptions(const DBOptions& options);
 
   void Dump(Logger* log) const;
+
+  Clue_Entry_Set *ce_set;
+  DB_MASTER *db_master_ptr;
+  std::mutex *rollback_mutex;
 
   bool create_if_missing;
   bool create_missing_column_families;

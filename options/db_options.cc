@@ -674,7 +674,10 @@ std::unique_ptr<Configurable> DBOptionsAsConfigurable(
 ImmutableDBOptions::ImmutableDBOptions() : ImmutableDBOptions(Options()) {}
 
 ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
-    : create_if_missing(options.create_if_missing),
+    : ce_set(options.ce_set),
+      db_master_ptr(options.db_master_ptr),
+      rollback_mutex(options.rollback_mutex),
+      create_if_missing(options.create_if_missing),
       create_missing_column_families(options.create_missing_column_families),
       error_if_exists(options.error_if_exists),
       paranoid_checks(options.paranoid_checks),

@@ -30,6 +30,8 @@
 #include "rocksdb/universal_compaction.h"
 #include "rocksdb/version.h"
 #include "rocksdb/write_buffer_manager.h"
+#include "rocksdb/clue_entry_set.h"
+//#include "rocksdb/db_master.h"
 
 #ifdef max
 #undef max
@@ -56,6 +58,10 @@ class Statistics;
 class InternalKeyComparator;
 class WalFilter;
 class FileSystem;
+
+//ksm
+class DB_MASTER;
+class Clue_Entry_Set;
 
 struct Options;
 struct DbPath;
@@ -467,6 +473,10 @@ struct DBOptions {
   // cores. You almost definitely want to call this function if your system is
   // bottlenecked by RocksDB.
   DBOptions* IncreaseParallelism(int total_threads = 16);
+
+  Clue_Entry_Set *ce_set;
+  DB_MASTER *db_master_ptr;
+  std::mutex *rollback_mutex;
 
   // If true, the database will be created if it is missing.
   // Default: false
@@ -1457,6 +1467,8 @@ enum ReadTier {
 
 // Options that control read operations
 struct ReadOptions {
+  Clue_Entry_Set *ce_set_ptr = nullptr;
+  bool rollback_read = false;
   // *** BEGIN options relevant to point lookups as well as scans ***
 
   // If "snapshot" is non-nullptr, read as of the supplied snapshot
