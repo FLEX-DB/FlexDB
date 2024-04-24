@@ -1,3 +1,6 @@
+## FlexDB: A Nearly Write-stall Free Key-value Store via a Novel LSM Sharding Approach
+> This GitHub repository is created with the purpose of anonymous submissions for SIGMOD 2025 2nd round research paper.
+
 ## RocksDB: A Persistent Key-Value Store for Flash and RAM Storage
 
 [![CircleCI Status](https://circleci.com/gh/facebook/rocksdb.svg?style=svg)](https://circleci.com/gh/facebook/rocksdb)
